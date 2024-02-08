@@ -1,0 +1,205 @@
+---
+title: "Combining-Performance-Metrics"
+author: "Amanda Bleichrodt"
+date: "2024-01-28"
+output: html_document
+---
+
+## Needed packages
+```{r needed-packages}
+library(qdapRegex)
+library(tidyverse)
+library(stringr)
+```
+
+## About
+
+This file reads in the forecast performance metrics for each calibration 
+period, forecast horizon, location, and model and combines them into one single
+'.csv' file. The '.csv' file is then exported to the working directory.
+
+```{r empty-vector}
+#############################
+# Creating the empty vector #
+#############################
+finalList <- NA
+```
+
+## Reading in the performance metrics
+
+Prior to combining the forecast metrics, we need to read them into R. This
+section creates a vector of file names. The file names are pulled from the 
+'Forecast-Metrics' folder. However, the names of the folders themselves will
+also be read into R; this will be handled in the next step of the code.
+
+```{r reading-in-metrics}
+allMetrics <- list.files (path = "~/Georgia State R/MonkeyPox/Mpox Metrics Paper/Forecast-Metrics/", # Folder with saved forecasts
+                          recursive = T, # Calling all files
+                          full.names = T) # Telling R we want the full file names 
+```
+
+## Combining the metrics
+
+Now that the file names are read into R, we will loop through each metric file,
+formatted as needed, and combine them into one file that will be exported.
+
+```{r combining-loop}
+for(i in 1:length(allMetrics)){
+  
+  # File name
+  metricName <- allMetrics[i]
+  
+  ################################################
+  # Pulling necessary information from file name #
+  ################################################
+  
+  # Model framework
+  model_framework <- qdapRegex::ex_between(metricName, "Metrics/", "/")[[1]][1]
+  
+  # Model type
+  if(model_framework %in% c("ARIMA", "GAM", "SLR", "Prophet")){
+    
+    model_type <- qdapRegex::ex_between(metricName, paste0(model_framework, "/"), "-weekly")[[1]][1]
+    
+  }else{
+    
+    model_type <- qdapRegex::ex_between(metricName, "performance-", "-onset")[[1]][1]
+    
+  }
+  
+  # Calibration period
+  calibration <- qdapRegex::ex_between(metricName, "calibration-", "-")[[1]][1]
+  
+  # Forecast horizon
+  horizon <- qdapRegex::ex_between(metricName, "horizon-", "-")[[1]][1]
+  
+  # Forecast date 
+  forecastDate <- str_sub(metricName,-14,-5)
+
+  
+  ###################
+  # Creating labels #
+  ###################
+  
+  # Model type 
+  modelLabel <- switch (model_framework,
+    "n-sub-epidemic" = "SE-",
+    "Spatial-wave" = "SW-",
+    model_type
+  )
+  
+  # Weight label
+  if(grepl("Unweighted", model_type)){
+    
+    weightLabel <- "-UW"
+    
+    modelFinal <- "Ensemble"
+    
+  }else if(grepl("Weighted", model_type)){
+    
+    weightLabel <- "-W"
+    
+    modelFinal <- "Ensemble"
+    
+  }
+
+  ################################
+  # Reformatting the metric file #
+  ################################
+  
+  # Reading in the file
+  data <- read.csv(metricName, header = T)
+  
+  ########################################################################
+  # Fixing the model name and final data file - ARIMA, GLM, GAM, Prophet #
+  ########################################################################
+  if(model_framework %in% c("ARIMA", "GAM", "SLR", "Prophet")){
+    
+    # Location 
+    location <- qdapRegex::ex_between(metricName, paste0("horizon-", horizon, "-"), paste0("-", forecastDate))[[1]][1]
+  
+    # Creating the data to be merged 
+    dataFinal <- data %>%
+      dplyr::mutate(Model = model_type, # Model type 
+                     Location  = location, # Location
+                     Calibration = calibration, # Calibration period 
+                     Horizon = horizon, # Forecasting horizon 
+                     Date = forecastDate) %>% # Forecasting Date
+       dplyr::rename("PI" = "X95PI") %>% # Renaming the 95% PI
+       dplyr::select(Location, Model, Calibration, Horizon, Date, MSE, MAE, PI, WIS) # Needed variables 
+       
+  ########################################################
+  # Fixing the model name and final data file - Ensemble #
+  ########################################################
+  }else if(grepl("Ensemble", model_type)){
+    
+    # Location 
+    location <- qdapRegex::ex_between(metricName, paste0("calibration-", calibration, "-"), paste0("-", forecastDate))[[1]][1]
+  
+    # Creating the data to be merged 
+    dataFinal <- data %>%
+     dplyr::mutate(Model = paste0(modelLabel, modelFinal, "(", row_number() + 1, ")", weightLabel), # Model type
+                   Location = location, # Location
+                   Calibration = calibration, # Calibration period 
+                   Horizon = horizon, # Forecasting horizon 
+                   Date = forecastDate) %>% # Forecast date
+      dplyr::rename("PI" = "Coverage.95.PI") %>% # 95% PI
+      dplyr::select(Location, Model, Calibration, Horizon, Date, MSE, MAE, PI, WIS) # Needed variables
+    
+  ######################################################
+  # Fixing the model name and final data file - Ranked #
+  ######################################################
+  }else{
+    
+    # Location 
+    location <- qdapRegex::ex_between(metricName, paste0("calibration-", calibration, "-"), paste0("-", forecastDate))[[1]][1]
+  
+    # Creating the data file to be merged 
+    dataFinal <- data %>%
+     dplyr::mutate(Model = paste0(modelLabel, "Ranked(", row_number(), ")"), # Model type 
+                  Location = location, # Location 
+                   Calibration = calibration, # Calibration period 
+                   Horizon = horizon, # Horizon 
+                   Date = forecastDate) %>% # Location
+      dplyr::rename("PI" = "Coverage.95.PI") %>% # 95% PI
+      dplyr::select(Location, Model, Calibration, Horizon, Date, MSE, MAE, PI, WIS) # Needed variables 
+    
+    }
+  
+  #####################################
+  # Adding the data to the final list #
+  #####################################
+  finalList <- rbind(finalList, dataFinal)
+  
+}
+```
+
+# Fixing country names 
+```{r fixing-names}
+############################
+# Adjusting Location Names #
+############################
+finalList <- finalList %>%
+  dplyr::mutate(Location = ifelse(Location == "US-OWID", "US(OWID)",
+                                  ifelse(Location == "US-CDC", "US(CDC)",
+                                         ifelse(Location == "United-Kingdom", "United Kingdom", Location))))
+```
+
+## Saving the final metrics
+
+Now that the metrics have been combined, the top row of NAs needs to be removed.
+The NAs occur because the initial state of the 'finalList' is NA. Once removed,
+the file will be saved as a '.csv' to the working directory.
+
+```{r saving-file}
+###############################
+# Removing the top row of NAs #
+###############################
+listToExport <- na.omit(finalList)
+
+#####################
+# Exporing the list #
+#####################
+write.csv(listToExport, "~/Georgia State R/MonkeyPox/Mpox Metrics Paper/Forecast-Metrics/all-metrics.csv", row.names = F)
+```
+

@@ -1,0 +1,416 @@
+---
+title: "Winkler Scores"
+author: "Amanda Bleichrodt"
+date: "2024-01-29"
+output: html_document
+---
+
+# Needed packages 
+```{r needed-packages}
+library(tidyverse)
+```
+
+# Creating the function to calculate Winkler Scores
+```{r winkler-function}
+#################################
+# Creating the Winkler Function #
+#################################
+winkler_score <- function(upper.bound, lower.bound, data){
+  
+  ##################################################
+  # Runs if the observed data is lower than the LB #
+  ##################################################
+  if(data < lower.bound){
+    
+    # Calculated Winkler Score
+    score <- (upper.bound - lower.bound) + (2/0.05)*(lower.bound-data)
+  
+  #################################################
+  # Runs if the observed data falls in the bounds #
+  #################################################
+  }else if(data >= lower.bound & data <= upper.bound){
+    
+    # Calculated Winkler score
+    score <- upper.bound - lower.bound
+  
+  ################################################
+  # Runs if the observed data falls above the UB #
+  ################################################
+  }else{
+    
+    # Calculated Winkler score 
+    score <- (upper.bound - lower.bound) + (2/0.05)*(data - upper.bound)
+    
+  }
+  
+  #######################
+  # Returning the score #
+  #######################
+  return(score)
+  
+}
+```
+
+# Calculating Winkler Scores for ARIMA
+```{r ARIMA-Forecasts-Winkler-Scores-1}
+#############################################
+# Empty data frame for ARIMA Winkler Scores #
+#############################################
+winker.scores.ARIMA <- data.frame(framework = NA, model = "ARIMA", weight = NA, area = NA, date = NA, horizon = NA, WS = NA)
+
+#################################
+# Creating a list of file-names #
+#################################
+ARIMA.forecasts <- list.files(
+  path = paste0("Forecasts/ARIMA/Forecasts/Formatted"), 
+          recursive = TRUE, # Indicates a pattern in files 
+          pattern = paste0(".csv"), 
+          full.names = T) # Calling full file names
+```
+
+## Applying the function to the ARIMA forecasts 
+```{r ARIMA-Forecasts-Winkler-Scores-2}
+###############################
+# Looping through ARIMA files #
+###############################
+for(a in 1:length(ARIMA.forecasts)){
+  
+  # File Name 
+  fileName <- ARIMA.forecasts[a]
+  
+  ######################################
+  # Pulling information from file name #
+  ######################################
+  
+  # Horizon
+  horizon <- as.numeric(qdapRegex::ex_between(fileName, "horizon-", "-")[[1]])
+  
+  # Determining the location associated with the file
+  area <- qdapRegex::ex_between(fileName, paste0("horizon-", horizon, "-"), "-")[[1]]
+  
+  # Determining the forecasting period associated with the file
+  date <- anytime::anydate(qdapRegex::ex_between(fileName, paste0(area, "-"), "-Formatted")[[1]])
+  
+  # Calibration period
+  calibration <- (qdapRegex::ex_between(fileName, "calibration-", "-horizon")[[1]])
+  
+  # Keeping only 11-weeks
+  if(calibration != "11"){
+    
+    next
+    
+  }
+  
+  #######################################
+  # Preparing the data for calculations #
+  #######################################
+  
+  # Reading in the data
+  data <- readr::read_csv(fileName)
+  
+  # Selecting the upper, lower, and observed data
+  data.filters <- data %>%
+    dplyr::mutate(Date = anytime::anydate(paste0(year, "-", month, "-", day))) %>% # Date column 
+    dplyr::filter(Date > date) %>% # Keeping only forecasting horizon 
+    dplyr::select(data, LB, UB) # Selecting needed variables
+  
+  ##################################
+  # Calculating the Winkler Scores #
+  ##################################
+  
+  # Creating vector for Winkler Scores
+  scoreList <- NA
+  
+  # Looping through rows 
+  for(h in 1:horizon){
+          
+  # Calculating the winkler scor
+  scoreList[h] <- winkler_score(data.filters$UB[h], data.filters$LB[h], data.filters$data[h])
+  
+  }
+  
+  # Avg. Winkler Scores - Across forecasts 
+  scoreTest <- mean(scoreList)
+  
+  ########################################
+  # Preparing the data for later merging #
+  ########################################
+  winker.scores.ARIMA <- rbind(winker.scores.ARIMA, c(framework = NA, model = "ARIMA", weight = NA, area, as.character(date), horizon, scoreTest))
+}
+```
+
+# Calculating Winkler Scores for the *n*-sub-epidemic model 
+```{r n-sub-epidemic-Forecasts-Winkler-Scores-1}
+############################
+# Winkler Score Data-Frame #
+############################
+winker.scores.nse <- data.frame(framework = NA, model = NA, weight = NA, area = NA, date = NA, horizon = NA, WS = NA)
+
+#################################
+# Creating a list of file-names #
+#################################
+n.forecasts <- list.files(
+  path = paste0("Forecasts/n-sub-epidemic/Calibration-11-Weeks"), 
+          recursive = TRUE, # Indicates a pattern in files 
+          pattern = paste0(".csv"), 
+          full.names = T) # Calling full file names
+```
+
+## Applying the function to the *n*-sub-epidemic forecasts 
+```{r n-sub-epidemic-Forecasts-Winkler-Scores-2}
+########################################
+# Looping through n-sub-epidemic files #
+########################################
+for(n in 1:length(n.forecasts)){
+  
+  # File Name 
+  fileName <- n.forecasts[n]
+  
+  ######################################
+  # Pulling information from file name #
+  ######################################
+  
+  # Model 
+  model <- qdapRegex::ex_between(fileName, "Weeks/", "-onsetfixed")[[1]][1]
+  
+  # Forecasting horizon
+  horizon <- as.numeric(qdapRegex::ex_between(fileName, "horizon-", "-")[[1]][1])
+  
+  # Forecast date
+  date <- str_sub(fileName,-14,-5)
+  
+  # Determining the location associated with the file
+  area <- qdapRegex::ex_between(fileName, paste0("horizon-", horizon, "-"), paste0("-", date))[[1]]
+          
+  # Weight 
+  if(grepl("Unweighted", model)){
+    
+   weight <- "-1"
+    
+  }else if(grepl("Weighted", model)){
+    
+    weight <- "1"
+    
+  }else{
+    
+    weight <- NA
+    
+  }
+  
+  #######################################
+  # Preparing the data for calculations #
+  #######################################
+  
+  # Reading in the data
+  data <- readr::read_csv(fileName)
+  
+  # Selecting the upper, lower, and observed data
+  data.filters <- data %>%
+    dplyr::mutate(Date = anytime::anydate(paste0(year, "-", month, "-", day))) %>% # Date column 
+    dplyr::filter(Date > anytime::anydate(date)) %>% # Keeping only forecasting horizon 
+    dplyr::select(data, LB, UB) # Selecting needed variables
+  
+  ##################################
+  # Calculating the Winkler Scores #
+  ##################################
+  
+  # Creating vector for Winkler Scores
+  scoreList <- NA
+  
+  # Looping through rows 
+  for(h in 1:horizon){
+          
+  # Calculating the winkler scor
+  scoreList[h] <- winkler_score(data.filters$UB[h], data.filters$LB[h], data.filters$data[h])
+  
+  }
+  
+  # Avg. Winkler Scores
+  scoreTest <- mean(scoreList)
+  
+  ########################################
+  # Preparing the data for later merging #
+  ########################################
+  winker.scores.nse <- rbind(winker.scores.nse, c(framework = "SE", model, weight, area, date = as.character(date), horizon, scoreTest)) 
+
+}
+```
+
+# Calculating Winkler Scores for the spatial-wave model 
+```{r spatial-wave-Forecasts-Winkler-Scores-1}
+############################
+# Winkler Score Data-Frame #
+############################
+winker.scores.sw <- data.frame(framework = "SW", model = NA, weight = NA, area = NA, date = NA, horizon = NA, WS = NA)
+
+#################################
+# Creating a list of file-names #
+#################################
+sw.forecasts <- list.files(
+  path = paste0("Forecasts/Spatial-wave/Calibration-11-Weeks"), 
+          recursive = TRUE, # Indicates a pattern in files 
+          pattern = paste0(".csv"), 
+          full.names = T) # Calling full file names
+```
+
+## Applying the function to the spatial-wave forecasts 
+```{r spatial-wave-Forecasts-Winkler-Scores-2}
+######################################
+# Looping through spatial-wave files #
+######################################
+for(w in 1:length(sw.forecasts)){
+  
+  # File Name 
+  fileName <- sw.forecasts[w]
+  
+  ######################################
+  # Pulling information from file name #
+  ######################################
+  
+  # Model 
+  model <- qdapRegex::ex_between(fileName, "Weeks/", "-onsetfixed")[[1]][1]
+  
+  # Forecasting horizon
+  horizon <- as.numeric(qdapRegex::ex_between(fileName, "horizon-", "-")[[1]][1])
+  
+  # Forecast date
+  date <- str_sub(fileName,-14,-5)
+  
+  # Determining the location associated with the file
+  area <- qdapRegex::ex_between(fileName, paste0("horizon-", horizon, "-"), paste0("-", date))[[1]]
+          
+  # Weight 
+  if(grepl("Unweighted", model)){
+    
+   weight <- "-1"
+    
+  }else if(grepl("Weighted", model)){
+    
+    weight <- "1"
+    
+  }else{
+    
+    weight <- NA
+    
+  }
+  
+  #######################################
+  # Preparing the data for calculations #
+  #######################################
+  
+  # Reading in the data
+  data <- readr::read_csv(fileName)
+  
+  # Selecting the upper, lower, and observed data
+  data.filters <- data %>%
+    dplyr::mutate(Date = anytime::anydate(paste0(year, "-", month, "-", day))) %>% # Date column 
+    dplyr::filter(Date > anytime::anydate(date)) %>% # Keeping only forecasting horizon 
+    dplyr::select(data, LB, UB) # Selecting needed variables
+  
+  ##################################
+  # Calculating the Winkler Scores #
+  ##################################
+  
+  # Creating vector for Winkler Scores
+  scoreList <- NA
+  
+  # Looping through rows 
+  for(h in 1:horizon){
+          
+  # Calculating the winkler scor
+  scoreList[h] <- winkler_score(data.filters$UB[h], data.filters$LB[h], data.filters$data[h])
+  
+  }
+  
+  # Avg. Winkler Scores
+  scoreTest <- mean(scoreList)
+  
+  ########################################
+  # Preparing the data for later merging #
+  ########################################
+  winker.scores.sw <- rbind(winker.scores.sw, c(framework = "SW", model, weight, area, date = as.character(date), horizon, scoreTest)) 
+
+}
+```
+
+# Combining the Winkler Scores - Crude
+```{r crude-skill-scores}
+###############################
+# Combining the crude metrics #
+###############################
+all.avg.winkler <- base::rbind(winker.scores.ARIMA[-1,] , winker.scores.nse[-1,], winker.scores.sw[-1,]) %>%
+  dplyr::mutate(Model = ifelse(!is.na(framework), paste0(framework, "-", model), model), # Model variable 
+                Location = area) %>% # Location
+  dplyr::ungroup() %>% # Ungrouping 
+  dplyr::select(Location, Model, date, horizon, WS) # Selecting needed variables
+
+###########################################
+# Saving the date-specific Winkler scores #
+###########################################
+write.csv(all.avg.winkler, "Forecast-Metrics/All-winkler-Scores.csv", row.names = F)
+
+```
+
+# Combining the Winkler Scores - Average 
+```{r combining-winkler-scores}
+#################################
+# Finding the avg. WS for ARIMA #
+#################################
+average.ARIMA <- winker.scores.ARIMA[-1,] %>%
+  dplyr::group_by(framework, model, weight, area, horizon) %>% # Grouping by variables other than date and scoreTest
+  dplyr::mutate(WS = as.numeric(WS), # Changing winkler score to numeric 
+                meanWS = mean(WS),
+                date = anytime::anydate(date)) # Mean of winkler scores across forecasting periods 
+
+###############################
+# Finding the avg. WS for NSE #
+###############################
+average.NSE <- winker.scores.nse[-1,] %>%
+  dplyr::group_by(framework, model, weight, area, horizon)  %>% # Grouping by variables other than date and scoreTest
+  dplyr::mutate(WS = as.numeric(WS), # Changing winkler score to numeric 
+                meanWS = mean(WS),
+                date = anytime::anydate(date)) # Mean of winkler scores across forecasting periods 
+
+##############################
+# Finding the avg. WS for SW #
+##############################
+average.SW <- winker.scores.sw[-1,] %>%
+  dplyr::group_by(framework, model, weight, area, horizon)  %>% # Grouping by variables other than date and scoreTest
+  dplyr::mutate(WS = as.numeric(WS), # Changing winkler score to numeric 
+                meanWS = mean(WS),
+                date = anytime::anydate(date)) # Mean of winkler scores across forecasting periods 
+
+#############################
+# Combining average metrics #
+#############################
+all.avg.winkler <- base::rbind(average.ARIMA, average.NSE, average.SW)
+```
+
+## Cleaning the data set 
+```{r cleaning-up-average-metrics}
+#################################
+# Cleaning of the avg. data set #
+#################################
+cleanAvg <- all.avg.winkler %>%
+  ungroup() %>% # Ungrouping 
+  dplyr::distinct(framework, model, area, horizon, .keep_all = T) %>% # Needed variables
+  
+  ######################################
+  # Creating the combined model column #
+  ######################################
+  dplyr::mutate(Location = area, # Location 
+                model_final = ifelse(is.na(framework) & is.na(weight), 
+                                     model,
+                                     paste0(framework, "-", model))) %>%
+                                  
+  ##################################   
+  # Selecting the needed variables #
+  ##################################
+  dplyr::select(Location, model, horizon, model_final, meanWS)
+
+##############################
+# Saving the average metrics #
+##############################
+write.csv(cleanAvg, "Forecast-Metrics/Average-winkler-Scores.csv", row.names = F)
+```
+

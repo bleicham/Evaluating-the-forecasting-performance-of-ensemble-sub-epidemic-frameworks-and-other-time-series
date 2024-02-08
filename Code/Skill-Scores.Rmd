@@ -1,0 +1,171 @@
+---
+title: "Calculating-Skill-Scores"
+author: "Amanda Bleichrodt"
+date: "2024-01-29"
+output: html_document
+---
+
+# Needed packages 
+```{r needed-packages}
+library(tidyverse)
+```
+
+# Reading in source data
+```{r Reading-In-Metrics}
+#######################################
+# Reading in the average metrics data #
+#######################################
+average_metrics <- read_csv("~/Georgia State R/MonkeyPox/Mpox Metrics Paper/Forecast-Metrics/average-metrics-overall.csv") %>%
+  # Fixing location labels 
+  dplyr::mutate(Location = ifelse(Location == "US-CDC", "US(CDC)",
+                                  ifelse(Location == "US-OWID", "US(OWID)",
+                                         ifelse(Location == "United-Kingdom", "United Kingdom", Location))))
+
+#############################
+# Winkler scores for 95% PI #
+#############################
+average_metricsPI <- read_csv("~/Georgia State R/MonkeyPox/Mpox Metrics Paper/Forecast-Metrics/Average-winkler-Scores.csv") %>%
+  # Fixing location labels 
+  dplyr::mutate(Location = ifelse(Location == "US-CDC", "US(CDC)",
+                                  ifelse(Location == "US-OWID", "US(OWID)",
+                                         ifelse(Location == "United-Kingdom", "United Kingdom", Location))))
+```
+
+# Preparing for calculating the skill scores
+```{r preparing-data}
+#############################################################
+# Creating an empty data frame to fill in with skill-scores #
+#############################################################
+fullMergeData <- NA
+```
+
+# Calculating the skill scores
+
+Skill scores provide a way of quantifying the improvment of one model over 
+another. In this case, we are using the established ARIMA model as our baseline
+and comparing it to the *n*-sub-epidemic and spatial-wave framework models. The
+equation for skill scores is as follow:
+
+         Baseline Model - Comparison Model / Baseline * 100.
+```{r looping-through-horizons}
+#############################
+# Starting the horizon loop #
+#############################
+for(h in 1:4){
+  
+  ######################################
+  # Sub-setting only the ARIMA metrics #
+  ######################################
+  ARIMAdata3 <- average_metrics[, -1] %>%
+    dplyr::filter(Calibration == 11, # Filtering to include only 11-week calibration 
+                  Model == "ARIMA", # Filtering to include only ARIMA metrics 
+                  Horizon == h) %>% # Filtering to include only indexed forecasting horizon 
+    dplyr::rename(ARIMA.MSE = AvgMSE, # Renaming the MSE metric for ARIMA 
+                  ARIMA.MAE = AvgMAE, # Renaming the MAE metric for ARIMA 
+                  ARIMA.WIS = AvgWIS) %>% # Renaming the WIS metric for ARIMA 
+    dplyr::select(-Calibration, -Model, -AvgPI) # Selecting the needed variables 
+  
+  # Handling the ARIMA Winkler scores
+  ARIMADataWinkler <- average_metricsPI %>%
+    dplyr::filter(Model == "ARIMA", # Filtering to include only ARIMA metrics
+                  Horizon == h) %>% # Filtering to include only indexed forecasting horizon 
+    dplyr::rename(ARIMA.Winkler = meanWS) %>% # Renaming the Winkler score for ARIMA
+    dplyr::select(Location, Horizon, ARIMA.Winkler) # Selecting the needed variables
+  
+  # Combining the two data frames
+  ARIMAdata <- merge(ARIMAdata3, ARIMADataWinkler)
+  
+  ################################################################
+  # Sub-setting only the n-sub-epidemic and spatial-wave metrics #
+  ################################################################
+  modelsOfInterest3 <- average_metrics[, -1] %>%
+    dplyr::filter(Calibration == 11, # Filtering to include only 11-week calibration 
+                  Model != "GAM", # Removing the GAM metrics 
+                  Model != "SLR", # Removing the SLR metrics 
+                  Model != "Prophet", # Removing the Prophet metrics 
+                  Model != "ARIMA", # Removing the ARIMA metrics 
+                  Horizon == h) %>%  # Filtering to include only indexed forecasting horizon 
+    dplyr::select(-Calibration, -AvgPI) # Selecting the needed variables 
+  
+  # Handling the Other Model Winkler scores
+  OtherDataWinkler <- average_metricsPI %>%
+      dplyr::filter(Model != "GAM", # Removing the GAM metrics 
+                    Model != "SLR", # Removing the SLR metrics 
+                    Model != "Prophet", # Removing the Prophet metrics 
+                    Model != "ARIMA", # Removing the ARIMA metrics 
+                    Horizon == h) %>%  # Filtering to include only indexed forecasting horizon 
+    dplyr::rename(AvgWS = meanWS) %>% # Renaming the Winkler score for ARIMA
+    dplyr::select(Location, Horizon, Model, AvgWS) # Selecting the needed variables
+  
+  # Combining the two data frames
+  modelsOfInterest <- merge(modelsOfInterest3, OtherDataWinkler)
+  
+  ################################
+  # Calculating the skill-scores #
+  ################################
+  calculatingSkillScores <- right_join(ARIMAdata, modelsOfInterest) %>% # Combining the ARIMA and other metrics 
+    dplyr::mutate(MSE.Score = ((ARIMA.MSE-AvgMSE)/ARIMA.MSE)*100, # MSE skill scores 
+                  MAE.Score = ((ARIMA.MAE-AvgMAE)/ARIMA.MAE)*100, # MAE skill scores 
+                  WIS.Score = ((ARIMA.WIS-AvgWIS)/ARIMA.WIS)*100, # WIS skill scores 
+                  PI.Score = ((ARIMA.Winkler-AvgWS)/ARIMA.Winkler)*100) %>% # PI skill scores 
+    dplyr::select(Location, Model, Horizon, MSE.Score, MAE.Score, PI.Score, WIS.Score) # Selecting the needed variables 
+  
+  ####################################
+  # Merging each forecasting horizon #
+  ####################################
+  fullMergeData <- rbind(fullMergeData, calculatingSkillScores) %>% # Merging each forecasting horizon 
+    stats::na.omit() %>% # Removing the NAs
+    dplyr::arrange(Horizon) # Ordering data from smallest to largest forecasting horizon 
+  
+}# End of loop going through forecasting horizons 
+```
+# Preparing the data tables 
+```{r preparing-data-tables}
+###############
+# MSE Metrics #
+###############
+MSE.Data <- fullMergeData %>%
+  dplyr::select(Location, Model, Horizon, MSE.Score) %>% # Selecting MSE variables 
+  dplyr::mutate(Metric = "MSE") %>% # Adding metric indicator 
+  tidyr::pivot_wider(names_from = Model, values_from = `MSE.Score`) # Long-to-wide data
+
+###############
+# MAE Metrics #
+###############
+MAE.Data <- fullMergeData %>%
+  dplyr::select(Location, Model, Horizon, MAE.Score) %>% # Selecting MAE variables 
+  dplyr::mutate(Metric = "MAE") %>% # Adding metric indicator 
+  tidyr::pivot_wider(names_from = Model, values_from = `MAE.Score`) # Long-to-wide data
+
+##############
+# PI Metrics #
+##############
+PI.Data <- fullMergeData %>%
+  dplyr::select(Location, Model, Horizon, PI.Score) %>% # Selecting MAE variables 
+  dplyr::mutate(Metric = "PI") %>% # Adding metric indicator 
+  tidyr::pivot_wider(names_from = Model, values_from = `PI.Score`) # Long-to-wide data
+
+###############
+# WIS Metrics #
+###############
+WIS.Data <- fullMergeData %>%
+  dplyr::select(Location, Model, Horizon, WIS.Score) %>% # Selecting WIS variables 
+  dplyr::mutate(Metric = "WIS") %>% # Adding metric indicator 
+  tidyr::pivot_wider(names_from = Model, values_from = `WIS.Score`) # Long-to-wide data
+
+#############################################
+# Combining all-metrics into one data-frame #
+#############################################
+FinalData <- base::rbind(MSE.Data, MAE.Data, PI.Data, WIS.Data)
+
+###################
+# Saving the data #
+###################
+utils::write.csv(FinalData, file = paste0("~/Georgia State R/MonkeyPox/Mpox Metrics Paper/Forecast-Metrics/skillScores.csv"), row.names = F)
+
+```
+
+`
+
+
+
