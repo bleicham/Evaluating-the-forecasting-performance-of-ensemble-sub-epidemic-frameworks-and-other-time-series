@@ -1,0 +1,167 @@
+---
+title: "Average-Forecasting-Metrics"
+author: "Amanda Bleichrodt"
+date: "2024-01-29"
+output: html_document
+---
+```{r needed-packages}
+library(tidyverse)
+```
+
+To compare forecasting metrics across locations, models and forecasting horizons
+this file calculates the average metrics across all forecasting periods. The
+data is grouped by location, model, calibration period and forecasting horizon.
+
+However, first the data is read in from the working directory. The name of the 
+file should be "all-metrics.csv", the file created from the "Merging-Forecast-
+Period-Metrics.Rmd" code. 
+
+# Reading in multi-period forecasting metrics 
+```{r reading-in-metrics}
+###################################################
+# Reading in the forecast-period specific metrics #
+###################################################
+all_metrics <- read_csv("~/Georgia State R/MonkeyPox/Mpox Metrics Paper/Forecast-Metrics/all-metrics.csv")
+```
+
+Once the data is read into R, the code then calculates the overall average
+metrics across forecasting dates for each location, model, calibration period,
+and forecasting horizon. The average metrics are then exported to the working
+directory as a '.csv'. 
+
+# Calculating the overall average metrics 
+```{r average-metrics}
+###############################
+# Calculating average metrics #
+###############################
+averageMetrics <- all_metrics %>%
+  dplyr::group_by(Location, Model, Calibration, Horizon) %>% # Grouping variables
+  dplyr::mutate(AvgMSE = mean(MSE), # Average MSE
+                AvgMAE = mean(MAE), # Average MAE
+                AvgPI = mean(PI), # Average 95% PI
+                AvgWIS = mean(WIS)) %>% # Average WIS
+  dplyr::distinct(Location, Model, Calibration, Horizon, .keep_all = T) %>% # Keeping unique rows
+  dplyr::select(Location, Model, Calibration, Horizon, AvgMSE, AvgMAE, AvgPI, AvgWIS) # Needed variables
+
+##############################
+# Saving the average metrics #
+##############################
+write.csv(averageMetrics, file = "~/Georgia State R/MonkeyPox/Mpox Metrics Paper/Forecast-Metrics/average-metrics-overall.csv")
+```
+
+As we are looking at multiple countries, another view of interest is looking 
+at the average metric by country specific epidemic phase. Here, we look at 
+for phases of interest: (1) Ascending, (2) Peak, (3) Descending, (4) tail-end.
+Once the average metrics are calculated, the file is then exported as a '.csv'
+to the working directory.
+
+# Calculating the time-period specific average metrics
+```{r time-period-metrics}
+###############################################
+# Average period specific performance metrics #
+###############################################
+avg_metric_date <- all_metrics %>%
+  dplyr::mutate(Date = anytime::anydate(Date), # Changing the date format to "Date"
+               
+                ############################
+                # Ascending phases - Dates #
+                ############################
+                Aphase = case_when(
+                  Location == "Germany" ~ '2022-06-23', # Germany
+                  Location ==  "Spain" ~ '2022-06-30', # Spain 
+                  Location == "Canada" ~ '2022-06-30', # Canada
+                  Location == "United Kingdom" ~ '2022-07-07', # UK
+                  Location == "France" ~ '2022-07-14', # France
+                  Location == "US(CDC)" ~ '2022-07-21', # US-CDC
+                  Location == "Brazil" ~ '2022-07-28', # Brazil
+                  Location == "World" ~ '2022-07-28', # World
+                  Location == "US(OWID)" ~ '2022-08-04' # US-OWID
+                ),
+                
+                ############################
+                # Peak phases - Start date #
+                ############################
+                PSphase = case_when(
+                  Location == "Germany" ~ '2022-06-30', # Germany
+                  Location == "France" ~ '2022-07-21', # France
+                  Location == "Spain" ~ '2022-07-07', # Spain
+                  Location == "Canada" ~ '2022-07-07', # Canada
+                  Location == "Brazil" ~ '2022-08-04', # Brazil
+                  Location == "World" ~ '2022-08-04', # World
+                  Location == "US(CDC)" ~ '2022-07-28', # US-CDC
+                  Location == "US(OWID)" ~ '2022-08-11', # US-OWID
+                  Location == "United Kingdom" ~ '2022-07-14' # UK
+                ),
+                
+                ##########################
+                # Peak phases - End date #
+                ##########################
+                PEphase = case_when(
+                  Location == "Germany" ~ '2022-07-14', # Germany
+                  Location == "France" ~ '2022-08-25', # France
+                  Location == "Spain" ~ '2022-08-11', # Spain
+                  Location == "United Kingdom" ~ '2022-7-14', # UK
+                  Location == "US(OWID)" ~ '2022-08-11', # US-OWID
+                  Location == "US(CDC)" ~ '2022-07-28', # US-CDC
+                  Location == "World" ~ '2022-08-11', # World
+                  Location == "Canada" ~ '2022-07-28', # Canada
+                  Location == "Brazil" ~ '2022-09-08' # Brazil
+                ), 
+                
+                ###########################
+                # Descending - Start date #
+                ###########################
+                DSphase = case_when(
+                  Location == "Germany" ~ '2022-07-21', # Germany
+                    Location == "France" ~ '2022-09-01', # France
+                    Location == "Spain" ~ '2022-08-18', # Spain
+                    Location == "United Kingdom" ~ '2022-07-21', # UK
+                    Location == "US(OWID)" ~ '2022-08-18', # US-OWID
+                    Location == "US(CDC)" ~ '2022-08-04', # US-CDC
+                    Location == "World" ~ '2022-08-18', # World
+                    Location == "Canada" ~ '2022-08-04', # Canada
+                    Location == "Brazil" ~ '2022-09-15' # Brazil
+                ),
+                
+                #########################
+                # Descending - End date #
+                #########################
+                DEphase = case_when(
+                  Location == "Germany" ~ '2022-10-13', # Germany
+                    Location == "France" ~ '2022-10-13', # France
+                    Location == "Spain" ~ '2022-10-06', # Spain
+                    Location == "United Kingdom" ~ '2022-10-13', # UK
+                    Location == "US(OWID)" ~ '2022-12-01', # US-OWID
+                    Location == "US(CDC)" ~ '2022-11-17', # US-CDC
+                    Location == "World" ~ '2022-12-08', # World
+                    Location == "Canada" ~ '2022-10-13', # Canada
+                    Location == "Brazil" ~ '2022-11-17' # Brazil
+                ),
+                
+                #####################################
+                # Creating the time indicator (1-4) #
+                #####################################
+                timeIndicator = ifelse(Date <= anytime::anydate(Aphase), 1, 
+                                       ifelse(Date <= anytime::anydate(PEphase) & Date >= anytime::anydate(PSphase), 2,
+                                              ifelse(Date <= anytime::anydate(DEphase) & Date >= anytime::anydate(DSphase), 3, 
+                                                     ifelse(Date > anytime::anydate(DEphase), 4, NA))))) %>%
+  ######################
+  # Group-by variables #
+  ######################
+  dplyr::group_by(Location, Model, Horizon, Calibration, timeIndicator) %>%
+  dplyr::mutate(avgMSE = mean(MSE), # Average MSE
+                avgMAE = mean(MAE), # Average MAE
+                avg95PI = mean(`PI`), # Average 95% PI
+                avgWIS = mean(WIS),  # Average WIS
+                timeIndicator = as.character(timeIndicator)) %>% # Saving time indicator as character
+  dplyr::distinct(Location, Model, Horizon, Calibration, timeIndicator, .keep_all = T) %>% # Keeping unique rows 
+  dplyr::select(Model, Location, Horizon, Calibration, timeIndicator, avgMSE, avgMAE, avg95PI, avgWIS) # Needed variables
+
+
+##########################################
+# Saving the average time-period metrics #
+##########################################
+write.csv(avg_metric_date, file = "~/Georgia State R/MonkeyPox/Mpox Metrics Paper/Forecast-Metrics/phase-specific-metrics.csv")
+
+```
+
