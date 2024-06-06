@@ -1,4 +1,4 @@
-Evaluating the forecasting performance of ensemble sub-epidemic frameworks and other time series models for the 2022-2023 mpox epidemic 
+## Evaluating the forecasting performance of ensemble sub-epidemic frameworks and other time series models for the 2022-2023 mpox epidemic
 
 Shield: [![CC BY 4.0][cc-by-shield]][cc-by]
 
